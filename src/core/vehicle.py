@@ -149,7 +149,11 @@ class Vehicle:
     def distance_to(self, x: float, y: float) -> float:
         dx = x - self.state.x
         dy = y - self.state.y
-
+        return np.sqrt(dx**2 + dy**2)
+    
+    def heading_to(self, x: float, y: float) -> float:
+        dx = x - self.state.x
+        dy = y - self.state.y
         target_heading = np.arctan2(dy, dx)
 
         diff = target_heading - self.state.theta
