@@ -1,12 +1,11 @@
 import sys
 from pathlib import Path
-import numpy as np
 
 project_root = Path(__file__).resolve().parents[1]
 sys.path.append(str(project_root))
 
-from src.core.vehicle import VehicleConfig, VehicleState, Vehicle
-from src.core.map import Map2D, CircleObstacle, RectangleObstacle, PolygonObstacle
+from src.core.vehicle import Vehicle
+from src.core.map import Map2D, CircleObstacle, RectangleObstacle
 from src.utils.config_loader import ConfigLoader
 
 
