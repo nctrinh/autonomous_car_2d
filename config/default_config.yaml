@@ -13,25 +13,72 @@ vehicle:
   max_deceleration: -5.0
   max_steering_angle: 0.6 # ~34 degrees
 
-map:
-  width: 100
-  height: 100
-  grid_size: 0.5
-  obstacle_inflation: 0.5
-
 planner:
-  algorithm: "astar"
-  goal_threshold: 1.0
-  max_iterations: 10000
-  step_size: 0.5
+  algorithm: rrt
+
+  astar:
+    max_iterations: 10000
+    goal_threshold: 1.0
+    safety_margin: 1.0
+    grid_resolution: 0.5
+    heuristic_weight: 1.5
+
+  rrt:
+    max_iterations: 10000
+    goal_threshold: 2.0
+    safety_margin: 1.0
+    step_size: 0.5
+    goal_sample_rate: 0.1
+
+  rrt_star:
+    max_iterations: 10000
+    goal_threshold: 2.0
+    safety_margin: 1.0
+    step_size: 0.5
+    goal_sample_rate: 0.1
+    rewire_radius: 5.0
 
 controller:
-  type: "pid"
-  kp: 1.5
-  ki: 0.05
-  kd: 0.6
-  lookahead_distance: 5.0
-  lookahead_gain: 0.5
+  type: "pid"   # pid | pure_pursuit | adaptive_pure_pursuit
+
+  pid:
+    kp_lateral: 1.5
+    ki_lateral: 0.05
+    kd_lateral: 0.6
+
+    kp_longitudinal: 0.8
+    ki_longitudinal: 0.05
+    kd_longitudinal: 0.1
+
+    max_steering: 0.6
+    max_acceleration: 3.0
+
+    lookahead_distance: 5.0
+    target_speed: 5.0
+    goal_threshold: 1.0
+    dt: 0.1
+
+  pure_pursuit:
+    lookahead_distance: 5.0
+    lookahead_gain: 0.5
+    min_lookahead: 2.0
+    max_lookahead: 10.0
+    target_speed: 5.0
+    speed_kp: 0.5
+    goal_threshold: 1.0
+    dt: 0.1
+
+  adaptive_pure_pursuit:
+    lookahead_distance: 5.0
+    lookahead_gain: 0.5
+    min_lookahead: 2.0
+    max_lookahead: 10.0
+    target_speed: 5.0
+    speed_kp: 0.5
+    goal_threshold: 1.0
+    dt: 0.1
+    max_curvature_speed: 3.0
+    curvature_lookahead: 10.0
 
 training:
   algorithm: "ppo"
@@ -50,3 +97,117 @@ visualization:
   obstacle_color: [100, 100, 100]
   path_color: [255, 0, 0]
   goal_color: [0, 255, 0]
+
+map:
+  width: 100
+  height: 100
+  start: [0.0, 0.0]
+  goal: [75.0, 55.0]
+
+  obstacles:
+    # =====================
+    # Cụm circle obstacles (nhiễu, vật cản nhỏ)
+    # =====================
+    - type: "circle"
+      x: 30
+      y: 30
+      radius: 1
+
+    - type: "circle"
+      x: 40
+      y: 60
+      radius: 3
+
+    - type: "circle"
+      x: 38
+      y: 25
+      radius: 2
+
+    - type: "circle"
+      x: 20
+      y: 45
+      radius: 2
+
+    - type: "circle"
+      x: 25
+      y: 50
+      radius: 1.5
+
+    - type: "circle"
+      x: 35
+      y: 55
+      radius: 1.5
+
+    - type: "circle"
+      x: 50
+      y: 20
+      radius: 2.5
+
+    # =====================
+    # Rectangle obstacles (tạo hành lang, tường)
+    # =====================
+    - type: "rectangle"
+      x: 60
+      y: 50
+      width: 10
+      height: 10
+      angle: 0.5
+
+    - type: "rectangle"
+      x: 45
+      y: 70
+      width: 20
+      height: 3
+      angle: 0.0
+
+    - type: "rectangle"
+      x: 45
+      y: 75
+      width: 20
+      height: 3
+      angle: 0.0
+
+    - type: "rectangle"
+      x: 70
+      y: 40
+      width: 3
+      height: 20
+      angle: 0.0
+
+    - type: "rectangle"
+      x: 75
+      y: 40
+      width: 3
+      height: 20
+      angle: 0.0
+
+    # =====================
+    # Polygon obstacles (hình dạng phức tạp)
+    # =====================
+    - type: "polygon"
+      vertices:
+        - [70, 70]
+        - [80, 75]
+        - [75, 85]
+        - [65, 80]
+
+    - type: "polygon"
+      vertices:
+        - [20, 80]
+        - [30, 78]
+        - [35, 85]
+        - [25, 90]
+
+    - type: "polygon"
+      vertices:
+        - [55, 10]
+        - [65, 12]
+        - [68, 20]
+        - [58, 18]
+
+    - type: "polygon"
+      vertices:
+        - [10, 60]
+        - [15, 65]
+        - [12, 75]
+        - [5, 70]
