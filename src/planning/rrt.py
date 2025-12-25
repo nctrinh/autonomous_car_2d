@@ -39,24 +39,27 @@ class RRTPlanner(BasePlanner):
     Fast but produces suboptimal paths.
     """
 
-    def __init__(self, map_env: Map2D):
+    def __init__(self, map_env: Map2D, max_iterations: int = 1000, 
+                step_size: float = 2.0, goal_sample_rate: float = 0.1,
+                goal_threshold: float = 2.0, safety_margin: float = 0.5,
+                rewire_radius: float = 5.0):
         super().__init__(map_env)
+        self.max_iterations = max_iterations
+        self.step_size = step_size
+        self.goal_sample_rate = goal_sample_rate
+        self.goal_threshold = goal_threshold
+        self.safety_margin = safety_margin
+        self.rewire_radius = rewire_radius
         self.nodes : List[RRTNode] = []
 
     def plan(self, start: Tuple[float, float],
-             goal: Tuple[float, float],
-             max_iterations: int = 5000,
-             step_size: float = 2.0,
-             goal_sample_rate: float = 0.1,
-             goal_threshold: float = 2.0,
-             safety_margin: float = 0.5) -> Optional[Path]:
+             goal: Tuple[float, float]) -> Optional[Path]:
         """
         Plan path using RRT algorithm.
         
         Args:
             start: Start position (x, y)
             goal: Goal position (x, y)
-            max_iterations: Maximum number of iterations
             step_size: Maximum distance to extend tree
             goal_sample_rate: Probability of sampling goal directly
             goal_threshold: Distance to goal considered as reached
@@ -69,19 +72,19 @@ class RRTPlanner(BasePlanner):
         start_time = time.time()
         
         # Check validity
-        if not self.is_valid_position(start[0], start[1], safety_margin):
+        if not self.is_valid_position(start[0], start[1], self.safety_margin):
             print("RRT: Start position is invalid!")
             return None
         
-        if not self.is_valid_position(goal[0], goal[1], safety_margin):
+        if not self.is_valid_position(goal[0], goal[1], self.safety_margin):
             print("RRT: Goal position is invalid!")
             return None
         
-        for i in range(max_iterations):
+        for i in range(self.max_iterations):
             self.iterations = i + 1
             
             # Sample random point (with bias toward goal)
-            if np.random.random() < goal_sample_rate:
+            if np.random.random() < self.goal_sample_rate:
                 random_point = RRTNode(goal[0], goal[1])
             else:
                 random_point = self._sample_random_point()
@@ -89,11 +92,11 @@ class RRTPlanner(BasePlanner):
             self.nodes = [RRTNode(start[0], start[1])]
         self.iterations = 0
         
-        for i in range(max_iterations):
+        for i in range(self.max_iterations):
             self.iterations = i + 1
             
             # Sample random point (with bias toward goal)
-            if np.random.random() < goal_sample_rate:
+            if np.random.random() < self.goal_sample_rate:
                 random_point = RRTNode(goal[0], goal[1])
             else:
                 random_point = self._sample_random_point()
@@ -102,19 +105,19 @@ class RRTPlanner(BasePlanner):
             nearest_node = self._get_nearest_node(random_point)
             
             # Steer toward random point with step_size limit
-            new_node = self._steer(nearest_node, random_point, step_size)
+            new_node = self._steer(nearest_node, random_point, self.step_size)
             
             # Check if path to new node is collision-free
-            if self._is_path_collision_free(nearest_node, new_node, safety_margin):
+            if self._is_path_collision_free(nearest_node, new_node, self.safety_margin):
                 new_node.parent = nearest_node
                 new_node.cost = nearest_node.cost + nearest_node.distance_to(new_node)
                 self.nodes.append(new_node)
                 
                 # Check if goal is reached
-                if new_node.distance_to(RRTNode(goal[0], goal[1])) <= goal_threshold:
+                if new_node.distance_to(RRTNode(goal[0], goal[1])) <= self.goal_threshold:
                     # Try to connect directly to goal
                     goal_node = RRTNode(goal[0], goal[1])
-                    if self._is_path_collision_free(new_node, goal_node, safety_margin):
+                    if self._is_path_collision_free(new_node, goal_node, self.safety_margin):
                         goal_node.parent = new_node
                         goal_node.cost = new_node.cost + new_node.distance_to(goal_node)
                         self.nodes.append(goal_node)
@@ -129,7 +132,7 @@ class RRTPlanner(BasePlanner):
                         return path
         
         self.planning_time = time.time() - start_time
-        print(f"RRT: No path found after {max_iterations} iterations!")
+        print(f"RRT: No path found after {self.max_iterations} iterations!")
         return None
     
     def _sample_random_point(self) -> RRTNode:
@@ -207,13 +210,7 @@ class RRTStarPlanner(RRTPlanner):
     """
     
     def plan(self, start: Tuple[float, float], 
-             goal: Tuple[float, float],
-             max_iterations: int = 5000,
-             step_size: float = 2.0,
-             goal_sample_rate: float = 0.1,
-             goal_threshold: float = 2.0,
-             safety_margin: float = 0.5,
-             rewire_radius: float = 5.0) -> Optional[Path]:
+             goal: Tuple[float, float]) -> Optional[Path]:
         """
         Plan path using RRT* algorithm with tree rewiring.
         
@@ -223,11 +220,11 @@ class RRTStarPlanner(RRTPlanner):
         """
         start_time = time.time()
         
-        if not self.is_valid_position(start[0], start[1], safety_margin):
+        if not self.is_valid_position(start[0], start[1], self.safety_margin):
             print("RRT*: Start position is invalid!")
             return None
         
-        if not self.is_valid_position(goal[0], goal[1], safety_margin):
+        if not self.is_valid_position(goal[0], goal[1], self.safety_margin):
             print("RRT*: Goal position is invalid!")
             return None
         
@@ -235,11 +232,11 @@ class RRTStarPlanner(RRTPlanner):
         self.iterations = 0
         goal_node = None
 
-        for i in range(max_iterations):
+        for i in range(self.max_iterations):
             self.iterations = i + 1
             
             # Sample
-            if np.random.random() < goal_sample_rate:
+            if np.random.random() < self.goal_sample_rate:
                 random_point = RRTNode(goal[0], goal[1])
             else:
                 random_point = self._sample_random_point()
@@ -248,14 +245,14 @@ class RRTStarPlanner(RRTPlanner):
             nearest_node = self._get_nearest_node(random_point)
             
             # Steer
-            new_node = self._steer(nearest_node, random_point, step_size)
+            new_node = self._steer(nearest_node, random_point, self.step_size)
             
             # Check collision
-            if not self._is_path_collision_free(nearest_node, new_node, safety_margin):
+            if not self._is_path_collision_free(nearest_node, new_node, self.safety_margin):
                 continue
             
             # Find neighbors for rewiring
-            neighbors = self._get_neighbors(new_node, rewire_radius)
+            neighbors = self._get_neighbors(new_node, self.rewire_radius)
             
             # Choose best parent (lowest cost)
             best_parent = nearest_node
@@ -263,7 +260,7 @@ class RRTStarPlanner(RRTPlanner):
             
             for neighbor in neighbors:
                 cost = neighbor.cost + neighbor.distance_to(new_node)
-                if cost < min_cost and self._is_path_collision_free(neighbor, new_node, safety_margin):
+                if cost < min_cost and self._is_path_collision_free(neighbor, new_node, self.safety_margin):
                     best_parent = neighbor
                     min_cost = cost
             
@@ -275,14 +272,14 @@ class RRTStarPlanner(RRTPlanner):
             # Rewire tree
             for neighbor in neighbors:
                 new_cost = new_node.cost + new_node.distance_to(neighbor)
-                if new_cost < neighbor.cost and self._is_path_collision_free(new_node, neighbor, safety_margin):
+                if new_cost < neighbor.cost and self._is_path_collision_free(new_node, neighbor, self.safety_margin):
                     neighbor.parent = new_node
                     neighbor.cost = new_cost
             
             # Check goal
-            if new_node.distance_to(RRTNode(goal[0], goal[1])) <= goal_threshold:
+            if new_node.distance_to(RRTNode(goal[0], goal[1])) <= self.goal_threshold:
                 goal_node_temp = RRTNode(goal[0], goal[1])
-                if self._is_path_collision_free(new_node, goal_node_temp, safety_margin):
+                if self._is_path_collision_free(new_node, goal_node_temp, self.safety_margin):
                     if goal_node is None:
                         goal_node = goal_node_temp
                         goal_node.parent = new_node
@@ -304,7 +301,7 @@ class RRTStarPlanner(RRTPlanner):
                   f"Time: {self.planning_time:.3f}s, Iterations: {self.iterations}")
             return path
         
-        print(f"RRT*: No path found after {max_iterations} iterations!")
+        print(f"RRT*: No path found after {self.max_iterations} iterations!")
         return None
     
     def _get_neighbors(self, node: RRTNode, radius: float) -> List[RRTNode]:
@@ -334,7 +331,7 @@ if __name__ == "__main__":
     
     # Test RRT
     rrt = RRTPlanner(map_env)
-    path_rrt = rrt.plan(start, goal, max_iterations=3000, step_size=3.0)
+    path_rrt = rrt.plan(start, goal)
     
     if path_rrt:
         print(f"RRT Path: {path_rrt.length:.2f}m, {len(path_rrt.points)} waypoints")
@@ -345,8 +342,7 @@ if __name__ == "__main__":
     
     # Test RRT*
     rrt_star = RRTStarPlanner(map_env)
-    path_rrt_star = rrt_star.plan(start, goal, max_iterations=3000, 
-                                    step_size=3.0, rewire_radius=8.0)
+    path_rrt_star = rrt_star.plan(start, goal)
     
     if path_rrt_star:
         print(f"RRT* Path: {path_rrt_star.length:.2f}m, {len(path_rrt_star.points)} waypoints")

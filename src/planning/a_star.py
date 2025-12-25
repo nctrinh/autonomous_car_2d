@@ -12,10 +12,14 @@ from src.core.map import Map2D
 
 
 class AStarPlanner(BasePlanner):
-    def __init__(self, map_env: Map2D, grid_resolution: float = 0.5):
+    def __init__(self, map_env: Map2D, grid_resolution: float = 0.5, 
+                max_iterations: int = 100000, heuristic_weight: float = 1.0,
+                safety_margin: float = 0.5):
         self.map_env = map_env
         self.grid_resolution = grid_resolution
-
+        self.max_iterations = max_iterations
+        self.heuristic_weight = heuristic_weight
+        self.safety_margin = safety_margin
         self.grid_width = int(np.ceil(self.map_env.width / self.grid_resolution))
         self.grid_height = int(np.ceil(self.map_env.height / self.grid_resolution))
 
@@ -30,20 +34,17 @@ class AStarPlanner(BasePlanner):
         return (x, y)
     
     def plan(self, start: Tuple[float, float],
-             goal: Tuple[float, float],
-             max_iterations: int = 100000,
-             heuristic_weight: float = 1.0,
-             safety_margin: float = 0.5) -> Optional[Path]:
+             goal: Tuple[float, float]) -> Optional[Path]:
         start_time = time.time()
         
         start_grid = self.world_to_grid(start[0], start[1])
         goal_grid = self.world_to_grid(goal[0], goal[1])
 
-        if not self.is_valid_position(start[0], start[1], safety_margin):
+        if not self.is_valid_position(start[0], start[1], self.safety_margin):
             print("A*: Start position is invalid!")
             return None
         
-        if not self.is_valid_position(goal[0], goal[1], safety_margin):
+        if not self.is_valid_position(goal[0], goal[1], self.safety_margin):
             print("A*: Goal position is invalid!")
             return None
         
@@ -59,7 +60,7 @@ class AStarPlanner(BasePlanner):
 
         self.iterations = 0
 
-        while open_set and self.iterations < max_iterations:
+        while open_set and self.iterations < self.max_iterations:
             self.iterations += 1
 
             _, _, current = heapq.heappop(open_set)
@@ -75,7 +76,7 @@ class AStarPlanner(BasePlanner):
 
             closed_set.add(current)
 
-            for neighbor in self._get_grid_neighbors(current, safety_margin):
+            for neighbor in self._get_grid_neighbors(current, self.safety_margin):
                 if neighbor in closed_set:
                     continue
 
@@ -90,7 +91,7 @@ class AStarPlanner(BasePlanner):
                     g_score[neighbor] = tentative_g
                     
                     h = self.heuristic(neighbor, goal_grid) * self.grid_resolution
-                    f_score[neighbor] = tentative_g + heuristic_weight * h
+                    f_score[neighbor] = tentative_g + self.heuristic_weight * h
                     
                     counter += 1
                     heapq.heappush(open_set, (f_score[neighbor], counter, neighbor))
@@ -142,7 +143,7 @@ class AStarPlanner(BasePlanner):
         path = self._smooth_path(path)
         
         return path
-    def _smooth_path(self, path: Path, max_iterations: int = 100) -> Path:
+    def _smooth_path(self, path: Path) -> Path:
         """
         Smooth path by removing unnecessary waypoints.
         Uses line-of-sight shortcutting.
@@ -191,7 +192,7 @@ if __name__ == "__main__":
     print(f"Planning from {start} to {goal}")
     print(f"Grid size: {planner.grid_width} x {planner.grid_height}")
     
-    path = planner.plan(start, goal, heuristic_weight=1.5, safety_margin=1.0, max_iterations=1000)
+    path = planner.plan(start, goal)
     
     if path:
         print(f"\nPath found!")
