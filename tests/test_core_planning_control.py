@@ -44,7 +44,7 @@ def test_planners():
     print("\n1. Testing A* Planner...")
     print("-" * 70)
     astar = AStarPlanner(map_env, grid_resolution=0.5)
-    path_astar = astar.plan(start, goal, safety_margin=1.0)
+    path_astar = astar.plan(start, goal)
     
     if path_astar:
         results['A*'] = {
@@ -64,7 +64,7 @@ def test_planners():
     print("\n2. Testing RRT Planner...")
     print("-" * 70)
     rrt = RRTPlanner(map_env)
-    path_rrt = rrt.plan(start, goal, max_iterations=3000, step_size=3.0)
+    path_rrt = rrt.plan(start, goal)
     
     if path_rrt:
         results['RRT'] = {
@@ -84,8 +84,7 @@ def test_planners():
     print("\n3. Testing RRT* Planner...")
     print("-" * 70)
     rrt_star = RRTStarPlanner(map_env)
-    path_rrt_star = rrt_star.plan(start, goal, max_iterations=3000, 
-                                    step_size=3.0, rewire_radius=8.0)
+    path_rrt_star = rrt_star.plan(start, goal)
     
     if path_rrt_star:
         results['RRT*'] = {
@@ -130,24 +129,22 @@ def test_controllers(path):
     
     vehicle_pid = Vehicle()
     vehicle_pid.reset(x=path.points[0].x, y=path.points[0].y, theta=0)
-    
+    dt = 0.1
     controller_pid = PathFollowingPID(
-        lookahead_distance=5.0,
-        target_speed=5.0
+        vehicle_pid, dt=dt
     )
     controller_pid.set_path(path)
     
     # Simulate
-    dt = 0.1
-    max_steps = 500
+    max_steps = 1000
     trajectory_pid = []
     
     for step in range(max_steps):
-        acceleration, steering = controller_pid.control(vehicle_pid, dt)
-        vehicle_pid.update(acceleration, steering, dt)
+        acceleration, steering = controller_pid.control()
+        vehicle_pid.update(acceleration, steering)
         trajectory_pid.append(vehicle_pid.get_position())
         
-        if controller_pid.is_goal_reached(vehicle_pid, threshold=2.0):
+        if controller_pid.is_goal_reached():
             print(f"✓ PID reached goal in {step} steps ({step*dt:.1f}s)")
             break
     else:
@@ -159,10 +156,11 @@ def test_controllers(path):
     
     vehicle_pp = Vehicle()
     vehicle_pp.reset(x=path.points[0].x, y=path.points[0].y, theta=0)
+    threshold=2.0
     
     controller_pp = PurePursuitController(
-        lookahead_distance=5.0,
-        target_speed=5.0
+        vehicle_pp,
+        goal_threshold=threshold
     )
     controller_pp.set_path(path)
     
@@ -170,11 +168,11 @@ def test_controllers(path):
     trajectory_pp = []
     
     for step in range(max_steps):
-        acceleration, steering = controller_pp.control(vehicle_pp, dt)
-        vehicle_pp.update(acceleration, steering, dt)
+        acceleration, steering = controller_pp.control()
+        vehicle_pp.update(acceleration, steering)
         trajectory_pp.append(vehicle_pp.get_position())
         
-        if controller_pp.is_goal_reached(vehicle_pp, threshold=2.0):
+        if controller_pp.is_goal_reached():
             print(f"✓ Pure Pursuit reached goal in {step} steps ({step*dt:.1f}s)")
             break
     else:
@@ -223,7 +221,7 @@ def test_integration():
     
     # Plan with A*
     planner = AStarPlanner(map_env, grid_resolution=0.5)
-    path = planner.plan(map_env.start, map_env.goal, safety_margin=1.0)
+    path = planner.plan(map_env.start, map_env.goal)
     
     if not path:
         print("✗ Planning failed, cannot test integration")
@@ -235,19 +233,18 @@ def test_integration():
     vehicle = Vehicle()
     vehicle.reset(x=path.points[0].x, y=path.points[0].y, theta=0)
     
-    controller = PurePursuitController(lookahead_distance=5.0, target_speed=5.0)
+    controller = PurePursuitController(vehicle=vehicle, goal_threshold=2.0)
     controller.set_path(path)
     
-    dt = 0.1
     max_steps = 1000
     collision_detected = False
     
     for step in range(max_steps):
         # Control
-        acceleration, steering = controller.control(vehicle, dt)
+        acceleration, steering = controller.control()
         
         # Update
-        vehicle.update(acceleration, steering, dt)
+        vehicle.update(acceleration, steering)
         
         # Check collision
         pos = vehicle.get_position()
@@ -257,8 +254,8 @@ def test_integration():
             break
         
         # Check goal
-        if controller.is_goal_reached(vehicle, threshold=2.0):
-            print(f"✓ Goal reached successfully in {step} steps ({step*dt:.1f}s)!")
+        if controller.is_goal_reached():
+            print(f"✓ Goal reached successfully in {step} steps ({step*0.1:.1f}s)!")
             print(f"  Final position: ({pos[0]:.2f}, {pos[1]:.2f})")
             print(f"  Target position: ({map_env.goal[0]:.2f}, {map_env.goal[1]:.2f})")
             print(f"  Distance to goal: {vehicle.distance_to(map_env.goal[0], map_env.goal[1]):.2f}m")

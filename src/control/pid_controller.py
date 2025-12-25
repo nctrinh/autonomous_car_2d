@@ -197,9 +197,12 @@ class PathFollowingPID:
     """
     
     def __init__(self, 
+                 vehicle: Vehicle = Vehicle(),
                  pid_controller: Optional[PIDController] = None,
                  lookahead_distance: float = 5.0,
-                 target_speed: float = 5.0):
+                 target_speed: float = 5.0,
+                 goal_threshold: float = 1.0,
+                 dt: float = 0.1):
         """
         Initialize path following controller.
         
@@ -208,9 +211,12 @@ class PathFollowingPID:
             lookahead_distance: Distance ahead on path to target
             target_speed: Desired speed along path
         """
+        self.vehicle = vehicle
         self.pid = pid_controller or PIDController()
         self.lookahead_distance = lookahead_distance
         self.target_speed = target_speed
+        self.goal_threshold = goal_threshold
+        self.dt = dt
         self.path: Optional[PlannedPath] = None
         self.current_path_distance = 0.0
     
@@ -220,13 +226,9 @@ class PathFollowingPID:
         self.current_path_distance = 0.0
         self.pid.reset()
     
-    def control(self, vehicle: Vehicle, dt: float = 0.1) -> Tuple[float, float]:
+    def control(self) -> Tuple[float, float]:
         """
         Compute control commands to follow path.
-        
-        Args:
-            vehicle: Current vehicle state
-            dt: Time step
             
         Returns:
             (acceleration, steering_angle) control commands
@@ -235,25 +237,25 @@ class PathFollowingPID:
             return 0.0, 0.0
         
         # Find target point on path
-        target_point = self._find_target_point(vehicle)
+        target_point = self._find_target_point()
         
         # Adjust speed based on path curvature (optional)
-        target_speed = self._compute_target_speed(vehicle, target_point)
+        target_speed = self._compute_target_speed(target_point)
         
         # Compute control
         acceleration, steering = self.pid.control(
-            vehicle, target_point, target_speed, dt
+            self.vehicle, target_point, target_speed, self.dt
         )
         
         return acceleration, steering
     
-    def _find_target_point(self, vehicle: Vehicle) -> Tuple[float, float]:
+    def _find_target_point(self) -> Tuple[float, float]:
         """
         Find target point on path using lookahead distance.
         
         Finds closest point on path, then looks ahead by lookahead_distance.
         """
-        vehicle_pos = vehicle.get_position()
+        vehicle_pos = self.vehicle.get_position()
         
         # Find closest point on path
         min_dist = float('inf')
@@ -283,8 +285,7 @@ class PathFollowingPID:
         
         return target_point.to_tuple()
     
-    def _compute_target_speed(self, vehicle: Vehicle, 
-                             target_point: Tuple[float, float]) -> float:
+    def _compute_target_speed(self, target_point: Tuple[float, float]) -> float:
         """
         Compute target speed based on path curvature.
         
@@ -294,22 +295,22 @@ class PathFollowingPID:
         # Advanced: reduce speed for high curvature
         
         # Calculate heading change rate (approximation of curvature)
-        heading_to_target = vehicle.heading_to(target_point[0], target_point[1])
+        heading_to_target = self.vehicle.heading_to(target_point[0], target_point[1])
         
         # Reduce speed for large heading errors (sharp turns)
         speed_reduction = 1.0 - min(abs(heading_to_target) / np.pi, 0.5)
         
         return self.target_speed * speed_reduction
     
-    def is_goal_reached(self, vehicle: Vehicle, threshold: float = 1.0) -> bool:
+    def is_goal_reached(self) -> bool:
         """Check if vehicle has reached the end of path."""
         if self.path is None:
             return True
         
         goal = self.path.points[-1]
-        distance = vehicle.distance_to(goal.x, goal.y)
+        distance = self.vehicle.distance_to(goal.x, goal.y)
         
-        return distance < threshold
+        return distance < self.goal_threshold
     
 
 if __name__ == "__main__":
@@ -332,6 +333,7 @@ if __name__ == "__main__":
     
     # Create path following controller
     controller = PathFollowingPID(
+        vehicle,
         lookahead_distance=5.0,
         target_speed=5.0
     )
@@ -344,7 +346,7 @@ if __name__ == "__main__":
     
     for step in range(max_steps):
         # Get control commands
-        acceleration, steering = controller.control(vehicle, dt)
+        acceleration, steering = controller.control()
         
         # Update vehicle
         vehicle.update(acceleration, steering, dt)
@@ -357,7 +359,7 @@ if __name__ == "__main__":
                   f"steering={np.degrees(steering):.1f}°")
         
         # Check if goal reached
-        if controller.is_goal_reached(vehicle, threshold=1.0):
+        if controller.is_goal_reached():
             print(f"\nGoal reached at step {step}!")
             print(f"Final position: {vehicle.get_position()}")
             print(f"Target position: ({path.points[-1].x}, {path.points[-1].y})")
