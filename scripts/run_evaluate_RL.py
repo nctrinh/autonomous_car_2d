@@ -224,7 +224,7 @@ def print_evaluation_summary(stats: dict):
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate trained RL agent')
-    parser.add_argument('--model', type=str, required=True, help='Path to trained model')
+    parser.add_argument('--model', type=str, default='trained_models/ppo/ppo_final.zip', help='Path to trained model')
     parser.add_argument('--config', type=str, default='config/RL_config.yaml', help='Config path')
     parser.add_argument('--algorithm', type=str, default='ppo', choices=['ppo', 'sac'])
     parser.add_argument('--map', type=str, default=None, choices=['easy', 'medium', 'hard', 'maze', 'custom'])
