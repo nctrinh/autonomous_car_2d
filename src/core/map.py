@@ -1,5 +1,5 @@
 import numpy as np
-import json
+import yaml
 from typing import List, Tuple, Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -250,14 +250,14 @@ class Map2D:
         
         return min_dist
     
-    def save_to_json(self, filename: str):
-        """Save map to JSON file."""
+    def save_to_yaml(self, filename: str):
+        """Save map to YAML file."""
         data = {
             "width": self.width,
             "height": self.height,
             "safety_margin": self.safety_margin,
-            "start": self.start,
-            "goal": self.goal,
+            "start": list(self.start) if self.start else None,
+            "goal": list(self.goal) if self.goal else None,
             "obstacles": []
         }
         
@@ -285,22 +285,29 @@ class Map2D:
                 })
         
         with open(filename, 'w') as f:
-            json.dump(data, f, indent=2)
+            # sort_keys=False giúp giữ nguyên thứ tự các key như trong dictionary
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     @classmethod
-    def load_from_json(cls, filename: str) -> 'Map2D':
-        """Load map from JSON file."""
+    def load_from_yaml(cls, filename: str) -> 'Map2D':
+        """Load map from YAML file."""
         with open(filename, 'r') as f:
-            data = json.load(f)
-        
+            # Loader=yaml.SafeLoader giúp bảo mật khi đọc file
+            full_data = yaml.load(f, Loader=yaml.SafeLoader)
+        if "map" in full_data:
+            data = full_data["map"]
+        else:
+            data = full_data
         safety = data.get("safety_margin", 0.0)
         map_obj = cls(data["width"], data["height"], safety_margin=safety)
         
+        # Xử lý Start & Goal
         if "start" in data and data["start"]:
             map_obj.start = tuple(data["start"])
         if "goal" in data and data["goal"]:
             map_obj.goal = tuple(data["goal"])
         
+        # Xử lý danh sách Obstacles
         for obs_data in data.get("obstacles", []):
             obs_type = obs_data["type"]
             
@@ -319,6 +326,7 @@ class Map2D:
                     radius=obs_data["radius"]
                 )
             elif obs_type == "polygon":
+                # Chuyển vertices từ list trong YAML sang np.array
                 obstacle = PolygonObstacle(
                     vertices=np.array(obs_data["vertices"])
                 )
