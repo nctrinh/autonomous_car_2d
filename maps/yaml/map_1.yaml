@@ -1,0 +1,8 @@
+map:
+  width: 100.0
+  height: 100.0
+  safety_margin: 4.0
+  start: [10.0, 10.0]
+  goal: [90.0, 90.0]
+  templates: custom
+  obstacles: []
