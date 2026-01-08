@@ -2,6 +2,8 @@ import sys
 import argparse
 import yaml
 import numpy as np
+import glob
+import os
 from pathlib import Path
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.callbacks import CheckpointCallback
@@ -23,8 +25,12 @@ class ConfigLoader:
     def get_section(self, section):
         return self.cfg.get(section, {})
 
-def load_map_from_config(config: ConfigLoader) -> Map2D:
-    map_cfg = config.get_section("map")
+def load_map_from_yaml_file(yaml_path: Path) -> Map2D:
+    print(f"Loading map from: {yaml_path}")
+    with open(yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+    
+    map_cfg = data.get("map", data) 
     
     map_env = Map2D(
         width=map_cfg.get("width", 100), 
@@ -37,80 +43,24 @@ def load_map_from_config(config: ConfigLoader) -> Map2D:
     map_env.set_start(start[0], start[1])
     map_env.set_goal(goal[0], goal[1])
     
-    template = map_cfg.get("train_template", "custom")
-    print(f"Loading map template: {template}")
-
-    if template == 'easy':
-        map_env.add_obstacle(CircleObstacle(30, 30, 6))
-        map_env.add_obstacle(CircleObstacle(70, 70, 6))
-        
-    elif template == 'medium':
-        map_env.add_obstacle(CircleObstacle(30, 30, 8))
-        map_env.add_obstacle(RectangleObstacle(50, 50, 15, 20))
-        map_env.add_obstacle(CircleObstacle(70, 25, 6))
-        map_env.add_obstacle(CircleObstacle(60, 75, 7))
-        
-    elif template == 'hard':
-        for _ in range(20):
-            map_env.add_obstacle(CircleObstacle(
-                np.random.uniform(0, map_env.width), 
-                np.random.uniform(0, map_env.height), 
-                np.random.uniform(1, 4)
+    obstacles = map_cfg.get("obstacles", [])
+    for obs in obstacles:
+        if obs['type'] == 'circle':
+            map_env.add_obstacle(CircleObstacle(obs['x'], obs['y'], obs['radius']))
+        elif obs['type'] == 'rectangle':
+            map_env.add_obstacle(RectangleObstacle(
+                obs['x'], obs['y'], obs['width'], obs['height'], obs.get('angle', 0)
             ))
+        elif obs['type'] == "polygon":
+            map_env.add_obstacle(PolygonObstacle(vertices=np.array(obs["vertices"])))
+        else:
+            print(f"Warning: Unknown obstacle type {obs['type']}, skipping...")
             
-    elif template == 'maze':
-        map_env.add_obstacle(RectangleObstacle(25, 20, 10, 40))
-        map_env.add_obstacle(RectangleObstacle(50, 40, 10, 40))
-        map_env.add_obstacle(RectangleObstacle(75, 20, 10, 40))
-        map_env.add_obstacle(CircleObstacle(40, 65, 8))
-
-    else:
-        for obs in map_cfg.get("train_obstacles", []):
-            if obs['type'] == 'circle':
-                map_env.add_obstacle(CircleObstacle(obs['x'], obs['y'], obs['radius']))
-            elif obs['type'] == 'rectangle':
-                map_env.add_obstacle(RectangleObstacle(
-                    obs['x'], obs['y'], obs['width'], obs['height'], obs.get('angle', 0)
-                ))
-            elif obs['type'] == "polygon":
-                obstacle = PolygonObstacle(ertices=np.array(obs["vertices"]))
-            else:
-                print(f"Warning: Unknown obstacle type {obs['type']}, skipping...")
-                continue
     return map_env
 
-def train_model(env, config: ConfigLoader):
-    train_cfg = config.get_section("training")
-    model_cfg = config.get_section("model")
-    
-    algo = train_cfg.get("algorithm", "ppo").lower()
-    save_dir = Path(train_cfg.get("save_dir", "trained_models"))
-    log_dir = Path(train_cfg.get("log_dir", "logs"))
-    ppo_model_dir = Path(train_cfg.get("ppo_model_dir", "trained_models/ppo"))
-    sac_model_dir = Path(train_cfg.get("sac_model_dir", "trained_models/sac"))
-    
-    save_dir.mkdir(parents=True, exist_ok=True)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    ppo_model_dir.mkdir(parents=True, exist_ok=True)
-    sac_model_dir.mkdir(parents=True, exist_ok=True)
-
+def create_model(vec_env, train_cfg, model_cfg, algo):
     if algo == 'ppo':
-        save_dir = ppo_model_dir
-    elif algo == 'sac':
-        save_dir = sac_model_dir
-
-    checkpoint_callback = CheckpointCallback(
-        save_freq=train_cfg.get("save_freq", 50000),
-        save_path=str(save_dir),
-        name_prefix=f"{algo}_checkpoint"
-    )
-    
-    vec_env = DummyVecEnv([lambda: env])
-    
-    print(f"\nInitializing {algo.upper()} agent...")
-    
-    if algo == 'ppo':
-        model = PPO(
+        return PPO(
             "MlpPolicy",
             vec_env,
             learning_rate=model_cfg.get("learning_rate", 3e-4),
@@ -119,11 +69,11 @@ def train_model(env, config: ConfigLoader):
             gamma=model_cfg.get("gamma", 0.99),
             ent_coef=model_cfg.get("ent_coef", 0.01),
             verbose=1,
-            tensorboard_log=str(log_dir),
+            tensorboard_log=str(Path(train_cfg.get("log_dir", "logs"))),
             device=train_cfg.get("device", "auto")
         )
     elif algo == 'sac':
-        model = SAC(
+        return SAC(
             "MlpPolicy",
             vec_env,
             learning_rate=model_cfg.get("learning_rate", 3e-4),
@@ -132,26 +82,11 @@ def train_model(env, config: ConfigLoader):
             gamma=model_cfg.get("gamma", 0.99),
             tau=model_cfg.get("tau", 0.005),
             verbose=1,
-            tensorboard_log=str(log_dir),
+            tensorboard_log=str(Path(train_cfg.get("log_dir", "logs"))),
             device=train_cfg.get("device", "auto")
         )
     else:
         raise ValueError(f"Unknown algorithm: {algo}")
-
-    print(model.policy)
-    print(f"\nStarting training for {train_cfg.get('timesteps')} steps...")
-    
-    model.learn(
-        total_timesteps=train_cfg.get("timesteps"),
-        callback=checkpoint_callback,
-        progress_bar=True
-    )
-    
-    final_path = save_dir / f"{algo}_final.zip"
-    model.save(final_path)
-    print(f"\n✓ Final model saved to: {final_path}")
-    
-    return model
 
 def main():
     parser = argparse.ArgumentParser(description='Train RL agent with YAML config')
@@ -159,38 +94,78 @@ def main():
     args = parser.parse_args()
 
     print("="*70)
-    print(f"LOADING CONFIGURATION: {args.config}")
+    print(f"LOADING MAIN CONFIGURATION: {args.config}")
     print("="*70)
 
     try:
         config = ConfigLoader(args.config)
-        
-        print("\nCreating environment...")
-        map_env = load_map_from_config(config)
-        
+        train_cfg = config.get_section("training")
         env_cfg = config.get_section("environment")
-        env = AutonomousCarEnv(
-            map_env=map_env,
-            max_steps=env_cfg.get("max_steps", 1000),
-            num_lidar_rays=env_cfg.get("num_lidar_rays", 16),
-            render_mode=None
-        )
-        print("✓ Environment created")
-
-        model = train_model(env, config)
+        map_main_cfg = config.get_section("map")
         
-        print("\nRunning post-training evaluation...")
-        eval_episodes = config.get("training", "eval_episodes", 5)
-        obs, _ = env.reset()
-        for i in range(eval_episodes):
-            done = False
-            total_reward = 0
-            while not done:
-                action, _ = model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, _ = env.step(action)
-                total_reward += reward
-                done = terminated or truncated
-            print(f"  Eval Episode {i+1}: Reward = {total_reward:.2f}")
+        algo = train_cfg.get("algorithm", "ppo").lower()
+        save_dir = Path(train_cfg.get("save_dir", "trained_models")) / algo
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        map_folder_path = map_main_cfg.get("train_map_json")
+        
+        if not map_folder_path:
+            print("Error: 'train_map_json' not defined in map section of config.")
+            return 1
+
+        map_files = sorted(glob.glob(os.path.join(map_folder_path, "*.yaml")))
+        
+        if not map_files:
+            print(f"Error: No .yaml files found in {map_folder_path}")
+            return 1
+            
+        print(f"Found {len(map_files)} maps for curriculum training: {[Path(p).name for p in map_files]}")
+
+        model = None
+        timesteps_per_map = train_cfg.get("timesteps", 10000)
+
+        for i, map_file in enumerate(map_files):
+            print(f"\n" + "-"*30)
+            print(f"STARTING PHASE {i+1}/{len(map_files)}: Map {Path(map_file).name}")
+            print("-"*30)
+            
+            current_map = load_map_from_yaml_file(Path(map_file))
+            
+            env = AutonomousCarEnv(
+                map_env=current_map,
+                max_steps=env_cfg.get("max_steps", 1000),
+                num_lidar_rays=env_cfg.get("num_lidar_rays", 16),
+                render_mode=None
+            )
+            vec_env = DummyVecEnv([lambda: env])
+            
+            if model is None:
+                print("Initializing new model...")
+                model = create_model(vec_env, train_cfg, config.get_section("model"), algo)
+            else:
+                print("Loading existing model into new map environment...")
+                model.set_env(vec_env)
+
+            checkpoint_callback = CheckpointCallback(
+                save_freq=train_cfg.get("save_freq", 5000),
+                save_path=str(save_dir),
+                name_prefix=f"{algo}_map_{i+1}_{Path(map_file).stem}"
+            )
+            
+            model.learn(
+                total_timesteps=timesteps_per_map,
+                callback=checkpoint_callback,
+                reset_num_timesteps=False,
+                progress_bar=True
+            )
+            
+            phase_save_path = save_dir / f"{algo}_finished_map_{i+1}.zip"
+            model.save(phase_save_path)
+            print(f"✓ Completed Map {i+1}. Model saved to {phase_save_path}")
+
+        print("\n" + "="*70)
+        print("ALL TRAINING PHASES COMPLETED")
+        print("="*70)
 
         return 0
 
