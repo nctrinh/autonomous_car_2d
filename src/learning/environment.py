@@ -159,9 +159,11 @@ class AutonomousCarEnv(gym.Env):
         is_collision = False
         is_goal_reached = False
 
-        pos = self.vehicle.get_position()
-        
-        if self.map_env.is_collision(pos[0], pos[1], safety_margin=1.0):
+        vehicle_corners = self.vehicle.get_corners()
+        if (self.map_env.is_collision(vehicle_corners[0][0], vehicle_corners[0][1]) 
+            or self.map_env.is_collision(vehicle_corners[1][0], vehicle_corners[1][1])
+            or self.map_env.is_collision(vehicle_corners[2][0], vehicle_corners[2][1])
+            or self.map_env.is_collision(vehicle_corners[3][0], vehicle_corners[3][1])):
             is_collision = True
             terminated = True
         
@@ -247,7 +249,7 @@ class AutonomousCarEnv(gym.Env):
         
         ray_angles = theta + np.linspace(0, 2*np.pi, self.num_lidar_rays, endpoint=False)
         
-        step_size = 0.5 
+        step_size = 1.0 
         max_steps = int(self.lidar_range / step_size)
         
         for i, angle in enumerate(ray_angles):
@@ -257,11 +259,7 @@ class AutonomousCarEnv(gym.Env):
                 rx = pos[0] + dist * cos_a
                 ry = pos[1] + dist * sin_a
                 
-                if not (0 <= rx <= self.map_env.width and 0 <= ry <= self.map_env.height):
-                    readings[i] = dist / self.lidar_range
-                    break
-                
-                if self.map_env.is_collision(rx, ry):
+                if self.map_env.is_collision(rx, ry, 0):
                     readings[i] = dist / self.lidar_range
                     break
                     

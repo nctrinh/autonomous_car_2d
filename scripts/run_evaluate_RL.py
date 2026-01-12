@@ -15,6 +15,104 @@ from src.learning.environment import AutonomousCarEnv
 from src.core.map import Map2D, CircleObstacle, RectangleObstacle, PolygonObstacle
 from src.utils.config_loader import ConfigLoader
 from src.simulation.renderer import Renderer 
+from src.planning.a_star import AStarPlanner
+from src.planning.base_planner import Path as PlannerPath
+
+class FogOfWarDriver:
+    def __init__(self, env: AutonomousCarEnv):
+        self.env = env
+        
+        self.internal_map = Map2D(self.env.map_env.width, self.env.map_env.height, self.env.map_env.safety_margin)
+        
+        self.final_goal = env.map_env.goal
+        self.internal_map.set_start(*env.map_env.start)
+        self.internal_map.set_goal(*self.final_goal)
+        
+        self.current_path_points = []
+        self.current_wp_idx = 0
+        
+        self.detected_obstacles_cache = [] 
+
+    def update(self, lidar_data: np.ndarray =None):
+        vehicle_pos = self.env.vehicle.get_position()
+        
+        self._update_map_from_lidar(lidar_data)
+        
+        need_replan = False
+        if not self.current_path_points:
+            need_replan = True
+        elif self._is_path_blocked():
+             need_replan = True
+             
+        if need_replan:
+            self._replan(vehicle_pos)
+
+        self._update_env_goal_for_rl(vehicle_pos)
+
+    def _update_map_from_lidar(self, lidar_data: np.ndarray=None):
+        if lidar_data is None:
+            lidar_data, _ = self.env._get_observation()
+        
+        pos = self.env.vehicle.get_position()
+        theta = self.env.vehicle.state.theta
+        num_rays = self.env.num_lidar_rays
+        max_range = self.env.lidar_range
+        
+        for i in range(num_rays):
+            dist_norm = lidar_data[i]
+            
+            if dist_norm < 1.0: 
+                real_dist = dist_norm * max_range
+                angle = theta + (2 * np.pi * i / num_rays)
+                
+                ox = pos[0] + real_dist * np.cos(angle)
+                oy = pos[1] + real_dist * np.sin(angle)
+                
+                if self._is_new_obstacle(ox, oy):
+                    self.internal_map.add_obstacle(CircleObstacle(ox, oy, radius=0.25))
+                    self.detected_obstacles_cache.append((ox, oy))
+
+    def _is_new_obstacle(self, x, y):
+        for (cx, cy) in self.detected_obstacles_cache:
+            if np.hypot(cx - x, cy - y) < 1.2:
+                return False
+        return True
+
+    def _is_path_blocked(self):
+        if not self.current_path_points: return True
+        
+        check_range = min(len(self.current_path_points), self.current_wp_idx + 10)
+        for i in range(self.current_wp_idx, check_range):
+            p = self.current_path_points[i]
+            if self.internal_map.is_collision(p.x, p.y):
+                return True
+        return False
+
+    def _replan(self, start_pos):
+        planner = AStarPlanner(self.internal_map, grid_resolution=1.0, spacing=2.0)
+        
+        path_obj = planner.plan(start_pos, self.final_goal, info=False)
+        
+        if path_obj:
+            self.current_path_points = path_obj.points
+            self.current_wp_idx = 0
+        else:
+            print("Warning: No path found")
+
+    def _update_env_goal_for_rl(self, vehicle_pos):
+        if not self.current_path_points:
+            return
+
+        target_p = self.current_path_points[self.current_wp_idx]
+        dist = np.hypot(target_p.x - vehicle_pos[0], target_p.y - vehicle_pos[1])
+        
+        if dist < 3.0:
+            if self.current_wp_idx < len(self.current_path_points) - 1:
+                self.current_wp_idx += 1
+        
+        wp = self.current_path_points[self.current_wp_idx]
+        
+        self.env.map_env.set_goal(wp.x, wp.y)
 
 def load_map(config: ConfigLoader) -> Map2D:
     """Load map environment từ config."""
@@ -39,20 +137,52 @@ def load_map(config: ConfigLoader) -> Map2D:
         return map_env
 
 def evaluate_episode(model, env: AutonomousCarEnv, render: bool = False, deterministic: bool = True) -> dict:
-    """Evaluate one episode without Pygame rendering logic (Headless mode)."""
+    """
+    Evaluate one episode using Hybrid Logic (A* + RL) without rendering.
+    """
+    driver = FogOfWarDriver(env)
+
     obs, info = env.reset()
+    
+    driver.update()
+    
+    _, obs = env._get_observation()
+
     done = False
     episode_reward = 0
     steps = 0
     start_time = time.time()
     
+    is_success = False
+    final_goal = driver.final_goal
+    
     while not done:
+        driver.update()
+        _, obs = env._get_observation()
+        
         action, _ = model.predict(obs, deterministic=deterministic)
         obs, reward, terminated, truncated, info = env.step(action)
+        
         episode_reward += reward
         steps += 1
-        done = terminated or truncated
+        vehicle_corners = env.vehicle.get_corners()
+        pos = env.vehicle.get_position()
+        if (env.map_env.is_collision(vehicle_corners[0][0], vehicle_corners[0][1]) 
+            and env.map_env.is_collision(vehicle_corners[1][0], vehicle_corners[1][1])
+            and env.map_env.is_collision(vehicle_corners[2][0], vehicle_corners[2][1])
+            and env.map_env.is_collision(vehicle_corners[3][0], vehicle_corners[3][1])):
+            done = True
+            is_success = False
         
+        dist_to_final = np.linalg.norm(pos - np.array(final_goal))
+        
+        if dist_to_final < 3.0:
+            done = True
+            is_success = True
+
+        if steps >= env.max_steps:
+            done = True
+            
         if render:
             env.render()
 
@@ -60,18 +190,19 @@ def evaluate_episode(model, env: AutonomousCarEnv, render: bool = False, determi
         'reward': episode_reward,
         'steps': steps,
         'time': time.time() - start_time,
-        'distance_to_goal': info.get('distance_to_goal', 0),
-        'success': info.get('distance_to_goal', float('inf')) < 3.0,
+        'distance_to_goal': dist_to_final,
+        'success': is_success,
     }
 
 def visualize_episode_with_renderer(model, env: AutonomousCarEnv, config: ConfigLoader):
     """
-    Visualize RL episode using the high-quality Renderer from Simulation.
+    Visualize RL episode with 'Fog of War' logic:
+    - Real-time Mapping (Lidar -> Internal Map)
+    - Dynamic Re-planning (A* updates path when obstacles detected)
     """
     sim_params = config.get_simulation_params()
     map_params = config.get_map_params()
     
-    # 1. Init Renderer
     renderer = Renderer(
         screen_width=sim_params.get('screen_width', 1200),
         screen_height=sim_params.get('screen_height', 800),
@@ -79,9 +210,15 @@ def visualize_episode_with_renderer(model, env: AutonomousCarEnv, config: Config
         world_height=map_params.get('height', 100)
     )
     
-    print("Controls: SPACE=Pause, G=Grid, T=Trajectory, I=Info, ESC=Quit")
+    driver = FogOfWarDriver(env)
+
+    print("Controls: SPACE=Pause, G=Grid, T=Trajectory, P=Path, I=Info, ESC=Quit")
     
     obs, info = env.reset()
+    driver.update()
+    
+    _, obs = env._get_observation()
+    
     done = False
     episode_reward = 0
     steps = 0
@@ -89,70 +226,110 @@ def visualize_episode_with_renderer(model, env: AutonomousCarEnv, config: Config
     clock = pygame.time.Clock()
     target_fps = 60
     
-    # Tracking data
-    renderer.trajectory = [] # Reset trajectory
+    # Visualization toggles
+    show_path = True
+    show_internal_map = True
+    
+    renderer.trajectory = [] 
     
     running = True
     while running:
+        # --- Event Handling ---
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
+            if event.type == pygame.QUIT: running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    running = False
-                elif event.key == pygame.K_SPACE:
+                if event.key == pygame.K_ESCAPE: running = False
+                elif event.key == pygame.K_SPACE: 
                     paused = not paused
                     print("Paused" if paused else "Resumed")
-                elif event.key == pygame.K_g:
-                    renderer.show_grid = not renderer.show_grid
-                elif event.key == pygame.K_t:
-                    renderer.show_trajectory = not renderer.show_trajectory
-                elif event.key == pygame.K_i:
-                    renderer.show_info = not renderer.show_info
+                elif event.key == pygame.K_g: renderer.show_grid = not renderer.show_grid
+                elif event.key == pygame.K_t: renderer.show_trajectory = not renderer.show_trajectory
+                elif event.key == pygame.K_i: renderer.show_info = not renderer.show_info
+                elif event.key == pygame.K_p: show_path = not show_path # Toggle vẽ đường A*
 
-        if not running:
-            break
+        if not running: break
 
         if not paused and not done:
+            lidar_data, obs = env._get_observation()
+            # DRIVER UPDATE (Sense -> Map -> Plan)
+            driver.update(lidar_data)
+            
+            # GET OBS (Refresh observation relative to new Waypoint)
+            _, obs = env._get_observation()
+            
+            # 3. RL PREDICT
             action, _ = model.predict(obs, deterministic=True)
             
+            # 4. STEP
             obs, reward, terminated, truncated, info = env.step(action)
             
             episode_reward += reward
             steps += 1
-            done = terminated or truncated
-            
+            vehicle_corners = env.vehicle.get_corners()
+            if (env.map_env.is_collision(vehicle_corners[0][0], vehicle_corners[0][1]) 
+                or env.map_env.is_collision(vehicle_corners[1][0], vehicle_corners[1][1])
+                or env.map_env.is_collision(vehicle_corners[2][0], vehicle_corners[2][1])
+                or env.map_env.is_collision(vehicle_corners[3][0], vehicle_corners[3][1])):
+                print(f"\nCRASH! Vehicle collided at step {steps}. Reward: {episode_reward:.2f}")
+                done = True
+            # CHECK REAL GOAL
+            dist_to_final = np.linalg.norm(env.vehicle.get_position() - np.array(driver.final_goal))
+            if dist_to_final < 3.0:
+                print(f"\nVICTORY! Reached Goal. Reward: {episode_reward:.2f}, Steps: {steps}")
+                done = True
+            elif steps >= env.max_steps:
+                done = True
+
             pos = env.vehicle.get_position()
             renderer.add_trajectory_point(pos[0], pos[1])
-            
-            if done:
-                print(f"\nEpisode finished. Reward: {episode_reward:.2f}, Steps: {steps}")
-                print("Press ESC to exit visualization.")
 
+        # DRAWING
         renderer.clear()
         renderer.draw_grid()
         
         if env.map_env:
             renderer.draw_map(env.map_env)
-            if env.map_env.start and env.map_env.goal:
-                renderer.draw_start_goal(env.map_env.start, env.map_env.goal)
+            renderer.draw_start_goal(env.map_env.start, driver.final_goal)
+            
+        if show_internal_map:
+            for obs_obj in driver.internal_map.obstacles:
+                if hasattr(obs_obj, 'radius'):
+                    cx, cy = renderer.world_to_screen(obs_obj.x, obs_obj.y)
+                    scale = (renderer.scale_x + renderer.scale_y) / 2
+                    rad = int(obs_obj.radius * scale)
+                    pygame.draw.circle(renderer.screen, (255, 50, 50), (cx, cy), rad, 1)
+
+        if show_path and driver.current_path_points:
+            points = [(p.x, p.y) for p in driver.current_path_points]
+            if len(points) > 1:
+                screen_points = [renderer.world_to_screen(p[0], p[1]) for p in points]
+                pygame.draw.lines(renderer.screen, (255, 255, 0), False, screen_points, 2)
+                
+            if driver.current_path_points:
+                try:
+                    wp = driver.current_path_points[driver.current_wp_idx]
+                    wx, wy = renderer.world_to_screen(wp.x, wp.y)
+                    pygame.draw.circle(renderer.screen, (0, 255, 0), (wx, wy), 5)
+                except IndexError:
+                    pass
+
         renderer.draw_lidar_zone(
-                vehicle=env.vehicle,
-                sensor_range=env.lidar_range,
-                fov_deg=360,
-                color=(0, 255, 255), # Cyan
-                alpha=40
-            )
+            vehicle=env.vehicle,
+            sensor_range=env.lidar_range,
+            fov_deg=360,
+            color=(0, 255, 255), 
+            alpha=40
+        )
         renderer.draw_trajectory()
-        
         if env.vehicle:
             renderer.draw_vehicle(env.vehicle)
         
         additional_info = {
             'Reward': f"{episode_reward:.1f}",
             'Steps': steps,
-            'Action': f"[{action[0]:.2f}, {action[1]:.2f}]" if not done else "Done",
-            'Dist to Goal': f"{info.get('distance_to_goal', 0):.2f}m"
+            'Action': f"[{action[0]:.2f}, {action[1]:.2f}]",
+            'Real Dist': f"{dist_to_final:.2f}m",
+            'Mode': "Hybrid (A* + RL)"
         }
         renderer.draw_info_panel(env.vehicle, steps, clock.get_fps(), additional_info)
         

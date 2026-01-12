@@ -46,7 +46,7 @@ class AStarPlanner(BasePlanner):
         return (x, y)
     
     def plan(self, start: Tuple[float, float],
-             goal: Tuple[float, float]) -> Optional[Path]:
+             goal: Tuple[float, float], info: Optional[str] = True) -> Optional[Path]:
         start_time = time.time()
         
         start_grid = self.world_to_grid(start[0], start[1])
@@ -85,7 +85,8 @@ class AStarPlanner(BasePlanner):
             if current == goal_grid:
                 path = self._reconstruct_path(came_from, current, start, goal)
                 self.planning_time = time.time() - start_time
-                print(f"Path found! Length: {path.length:.2f}m, Time: {self.planning_time:.3f}s, Iterations: {self.iterations}")
+                if info:
+                    print(f"Path found! Length: {path.length:.2f}m, Time: {self.planning_time:.3f}s, Iterations: {self.iterations}")
                 return path
 
             if current in closed_set:
